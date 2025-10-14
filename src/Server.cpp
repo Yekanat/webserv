@@ -4,6 +4,7 @@
 #include <netinet/in.h>
 #include <unistd.h>
 #include <cstring>
+#include <cerrno>
 #include "utils.hpp"
 #include "HttpResponse.hpp"
 
@@ -148,11 +149,15 @@ void Server::_handleClientData(int client_fd) {
         return;
     }
     
-    // Ora indirizziamo la richiesta in base al metodo
+    // Handle different HTTP methods
     if (request.getMethod() == "GET") {
         _handleGetRequest(client_fd, request);
+    } else if (request.getMethod() == "POST") {
+        _handlePostRequest(client_fd, request);
+    } else if (request.getMethod() == "DELETE") {  // ADD this line
+        _handleDeleteRequest(client_fd, request);
     } else {
-        _sendError(client_fd, 405, "Method Not Allowed", "Only GET method is currently supported");
+        _sendError(client_fd, 405, "Method Not Allowed", "Only GET, POST and DELETE methods are supported");
     }
     
     close(client_fd);
@@ -453,3 +458,271 @@ void log(LogLevel level, const std::string& message) {
     
     std::cout << prefix << message << std::endl;
 }
+
+void Server::_handlePostRequest(int client_fd, const HttpRequest& request) {
+    std::cout << "POST " << request.getPath() << std::endl;
+    
+    // 1. Trova il server config che gestisce questo host
+    const ServerConfig* server = NULL;
+    std::string host = request.getHeader("host");
+    
+    // Rimuovi la porta dall'header host, se presente
+    size_t colonPos = host.find(':');
+    if (colonPos != std::string::npos)
+        host = host.substr(0, colonPos);
+    
+    // Trova il server config corrispondente
+    for (size_t i = 0; i < _servers.size(); ++i) {
+        if (_servers[i].server_name == host) {
+            server = &_servers[i];
+            break;
+        }
+    }
+    
+    // Se non troviamo un server specifico, usa il primo
+    if (!server && !_servers.empty()) {
+        server = &_servers[0];
+    }
+    
+    // 2. Trova il location block che combacia con l'URI
+    const LocationConfig* location = NULL;
+    if (server)
+        location = _findLocationMatch(request.getPath(), *server);
+    
+    // 3. Verifica che POST sia permesso
+    if (location && !location->methods.empty()) {
+        bool postAllowed = false;
+        for (size_t i = 0; i < location->methods.size(); ++i) {
+            if (location->methods[i] == "POST") {
+                postAllowed = true;
+                break;
+            }
+        }
+        if (!postAllowed) {
+            _sendError(client_fd, 405, "Method Not Allowed", "POST not allowed for this location");
+            return;
+        }
+    }
+    
+    // 4. Verifica content length limit
+    size_t contentLength = request.getContentLength();
+    size_t maxBodySize = server ? server->client_max_body_size : 0;
+    if (location && location->max_body_size > 0) {
+        maxBodySize = location->max_body_size;
+    }
+    if (maxBodySize > 0 && contentLength > maxBodySize) {
+        _sendError(client_fd, 413, "Payload Too Large", "Request body too large");
+        return;
+    }
+    
+    // 5. Processa i dati POST
+    _sendPostResponse(client_fd, request);
+}
+
+void Server::_sendPostResponse(int client_fd, const HttpRequest& request) {
+    // Crea HTML di risposta con i risultati dell'upload
+    std::ostringstream responseBody;
+    responseBody << "<!DOCTYPE html><html><head><title>POST Result</title></head><body>";
+    responseBody << "<h1>POST Request Processed Successfully</h1>";
+    
+    // Mostra i file uploadati
+    const std::map<std::string, std::string>& uploadedFiles = request.getUploadedFiles();
+    if (!uploadedFiles.empty()) {
+        responseBody << "<h2>Uploaded Files:</h2><ul>";
+        for (std::map<std::string, std::string>::const_iterator it = uploadedFiles.begin();
+             it != uploadedFiles.end(); ++it) {
+            responseBody << "<li><strong>" << it->first << ":</strong> " << it->second << "</li>";
+        }
+        responseBody << "</ul>";
+    }
+    
+    // Mostra i dati del form
+    const std::map<std::string, std::string>& postData = request.getPostData();
+    if (!postData.empty()) {
+        responseBody << "<h2>Form Data:</h2><ul>";
+        for (std::map<std::string, std::string>::const_iterator it = postData.begin();
+             it != postData.end(); ++it) {
+            responseBody << "<li><strong>" << it->first << ":</strong> " << it->second << "</li>";
+        }
+        responseBody << "</ul>";
+    }
+    
+    if (uploadedFiles.empty() && postData.empty()) {
+        responseBody << "<p>No data received in POST request.</p>";
+    }
+    
+    responseBody << "<p><a href=\"" << request.getPath() << "\">Go back</a></p>";
+    responseBody << "</body></html>";
+    
+    // Crea e invia la risposta
+    HttpResponse response;
+    response.setStatusCode(200);
+    response.setHeader("Content-Type", "text/html");
+    response.setBody(responseBody.str());
+    
+    std::string responseStr = response.toString();
+    if (send(client_fd, responseStr.c_str(), responseStr.size(), 0) < 0) {
+        std::cerr << "Errore invio risposta POST al client " << client_fd << std::endl;
+    } else {
+        std::cout << "Risposta POST 200 OK inviata" << std::endl;
+    }
+}
+
+void Server::_handleDeleteRequest(int client_fd, const HttpRequest& request) {
+    std::cout << "DELETE " << request.getPath() << std::endl;
+    
+    // 1. Find the server config that handles this host
+    const ServerConfig* server = NULL;
+    std::string host = request.getHeader("host");
+    
+    // Remove port from host header if present
+    size_t colonPos = host.find(':');
+    if (colonPos != std::string::npos)
+        host = host.substr(0, colonPos);
+    
+    // Find matching server config
+    for (size_t i = 0; i < _servers.size(); ++i) {
+        if (_servers[i].server_name == host) {
+            server = &_servers[i];
+            break;
+        }
+    }
+    
+    // If no specific server found, use the first one
+    if (!server && !_servers.empty()) {
+        server = &_servers[0];
+    }
+    
+    // 2. Find location block that matches the URI
+    const LocationConfig* location = NULL;
+    if (server)
+        location = _findLocationMatch(request.getPath(), *server);
+    
+    // 3. Check if DELETE is allowed
+    if (location && !location->methods.empty()) {
+        bool deleteAllowed = false;
+        for (size_t i = 0; i < location->methods.size(); ++i) {
+            if (location->methods[i] == "DELETE") {
+                deleteAllowed = true;
+                break;
+            }
+        }
+        if (!deleteAllowed) {
+            _sendDeleteResponse(client_fd, request, false, "DELETE method not allowed for this location");
+            return;
+        }
+    }
+    
+    // 4. Resolve the file path
+    std::string requestPath = request.getPath();
+    std::string filePath;
+    
+    if (location) {
+        // Use location root
+        filePath = location->root + requestPath;
+    } else if (server) {
+        // Use server root
+        filePath = server->root + requestPath;
+    } else {
+        // Default root
+        filePath = "./www" + requestPath;
+    }
+    
+    // Normalize path and prevent directory traversal
+    filePath = normalizePath(filePath);
+    
+    // 5. Security check: ensure path is within allowed directory
+    std::string allowedRoot = location ? location->root : (server ? server->root : "./www");
+    allowedRoot = normalizePath(allowedRoot);
+
+    if (filePath.find(allowedRoot) != 0) {
+        _sendDeleteResponse(client_fd, request, false, "Access denied: path outside allowed directory");
+        return;
+    }
+    
+    // 6. Check if file exists
+    if (!fileExists(filePath)) {
+        _sendDeleteResponse(client_fd, request, false, "File not found");
+        return;
+    }
+    
+    // 7. Check if it's a directory
+    if (isDirectory(filePath)) {
+        _sendDeleteResponse(client_fd, request, false, "Cannot delete directory");
+        return;
+    }
+    
+    // 8. Check file permissions (readable implies we can access it)
+    if (!isReadable(filePath)) {
+        _sendDeleteResponse(client_fd, request, false, "Access denied: insufficient permissions");
+        return;
+    }
+    
+    // 9. Attempt to delete the file
+    if (unlink(filePath.c_str()) == 0) {
+        _sendDeleteResponse(client_fd, request, true, "File deleted successfully");
+        std::cout << "File deleted: " << filePath << std::endl;
+    } else {
+        _sendDeleteResponse(client_fd, request, false, "Failed to delete file: " + std::string(strerror(errno)));
+        std::cerr << "Failed to delete " << filePath << ": " << strerror(errno) << std::endl;
+    }
+}
+
+void Server::_sendDeleteResponse(int client_fd, const HttpRequest& request, bool success, const std::string& message) {
+    HttpResponse response;
+    std::ostringstream responseBody;
+    
+    responseBody << "<!DOCTYPE html><html><head><title>DELETE Result</title>";
+    responseBody << "<style>body{font-family:Arial,sans-serif;margin:40px;}";
+    responseBody << ".success{color:green;} .error{color:red;}</style></head><body>";
+    
+    if (success) {
+        response.setStatusCode(200);
+        responseBody << "<h1 class=\"success\">✅ DELETE Successful</h1>";
+        responseBody << "<p class=\"success\">" << message << "</p>";
+    } else {
+        // Determine appropriate error code
+        if (message.find("not found") != std::string::npos) {
+            response.setStatusCode(404);
+        } else if (message.find("not allowed") != std::string::npos || message.find("Access denied") != std::string::npos) {
+            response.setStatusCode(403);
+        } else {
+            response.setStatusCode(500);
+        }
+        
+        responseBody << "<h1 class=\"error\">❌ DELETE Failed</h1>";
+        responseBody << "<p class=\"error\">" << message << "</p>";
+    }
+    
+    responseBody << "<p><strong>Requested path:</strong> " << request.getPath() << "</p>";
+    responseBody << "<p><a href=\"" << request.getPath() << "\">← Go back</a></p>";
+    responseBody << "</body></html>";
+    
+    response.setHeader("Content-Type", "text/html");
+    response.setBody(responseBody.str());
+    
+    std::string responseStr = response.toString();
+    if (send(client_fd, responseStr.c_str(), responseStr.size(), 0) < 0) {
+        std::cerr << "Error sending DELETE response to client " << client_fd << std::endl;
+    } else {
+        std::cout << "DELETE response " << response.getStatusCode() << " sent" << std::endl;
+    }
+}
+
+/* ADD this helper method if it doesn't exist
+std::string Server::_normalizePath(const std::string& path) {
+    std::string normalized = path;
+    
+    // Replace multiple slashes with single slash
+    size_t pos = 0;
+    while ((pos = normalized.find("//", pos)) != std::string::npos) {
+        normalized.replace(pos, 2, "/");
+    }
+    
+    // Remove trailing slash (except for root)
+    if (normalized.length() > 1 && normalized[normalized.length() - 1] == '/') {
+        normalized = normalized.substr(0, normalized.length() - 1);
+    }
+    
+    return normalized;
+}*/

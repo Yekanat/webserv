@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>POST Test Page</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        .form-section { background: #f5f5f5; padding: 20px; margin: 20px 0; border-radius: 5px; }
+        input, textarea, button { margin: 5px 0; padding: 8px; width: 300px; }
+        button { width: auto; background: #007cba; color: white; border: none; padding: 10px 20px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <h1>POST Method Testing</h1>
+    
+    <div class="form-section">
+        <h2>Simple Form (URL Encoded)</h2>
+        <form action="/test-form" method="post">
+            <label>Name:</label><br>
+            <input type="text" name="name" value="Test User" required><br>
+            
+            <label>Email:</label><br>
+            <input type="email" name="email" value="test@example.com" required><br>
+            
+            <label>Message:</label><br>
+            <textarea name="message" required>This is a test message with special chars: àáâã & <>&"'</textarea><br>
+            
+            <button type="submit">Send Form Data</button>
+        </form>
+    </div>
+    
+    <div class="form-section">
+        <h2>File Upload (Multipart)</h2>
+        <form action="/test-upload" method="post" enctype="multipart/form-data">
+            <label>Select File:</label><br>
+            <input type="file" name="test_file" required><br>
+            
+            <label>Category:</label><br>
+            <select name="category">
+                <option value="document">Document</option>
+                <option value="image">Image</option>
+                <option value="other">Other</option>
+            </select><br>
+            
+            <label>Notes:</label><br>
+            <textarea name="notes">File upload test</textarea><br>
+            
+            <button type="submit">Upload File</button>
+        </form>
+    </div>
+</body>
+</html>

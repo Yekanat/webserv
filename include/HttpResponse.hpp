@@ -18,6 +18,8 @@ public:
     static std::string getStatusMessage(int code);
     static std::string getContentType(const std::string& path);
 
+    int getStatusCode() const { return _statusCode; } // ADD getter for status code
+
 private:
     int _statusCode;
     std::map<std::string, std::string> _headers;

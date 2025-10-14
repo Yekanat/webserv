@@ -36,6 +36,10 @@ private:
     void _sendNotFound(int client_fd, const std::string& uri);
     void _sendForbidden(int client_fd, const std::string& uri);
     void _sendError(int client_fd, int statusCode, const std::string& statusText, const std::string& message);
+    void _handlePostRequest(int client_fd, const HttpRequest& request);
+    void _sendPostResponse(int client_fd, const HttpRequest& request);
+    void _handleDeleteRequest(int client_fd, const HttpRequest& request);
+    void _sendDeleteResponse(int client_fd, const HttpRequest& request, bool success, const std::string& message);
 };
 
 #endif
