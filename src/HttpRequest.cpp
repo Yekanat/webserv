@@ -137,6 +137,12 @@ bool HttpRequest::parse(const std::string& rawRequest, HttpRequest& request, std
         errorMsg = "Invalid HTTP version";
         return false;
     }
+    
+    // Validazione versione HTTP specifica (supportiamo solo HTTP/1.1)
+    if (request._version != "HTTP/1.1" && request._version != "HTTP/1.0") {
+        errorMsg = "Unsupported HTTP version: " + request._version;
+        return false;
+    }
 
     // Parse headers
     while (std::getline(stream, line)) {

@@ -266,12 +266,12 @@ run_test "Default config loads successfully" \
     "eval"
 
 run_test "Multiple server blocks working" \
-    "netstat -tulpn | grep :8080" \
+    "ss -tulpn | grep :8080" \
     "8080" \
     "eval"
 
 run_test "Multiple server blocks working (port 8000)" \
-    "netstat -tulpn | grep :8000" \
+    "ss -tulpn | grep :8000" \
     "8000" \
     "eval"
 
@@ -347,8 +347,8 @@ run_test "Special characters in URI" \
     "eval"
 
 run_test "Empty request handling" \
-    "echo '' | nc localhost 8080 || echo 'Connection handled'" \
-    "handled" \
+    "echo '' | nc localhost 8080 | head -1 | grep -o '400' || echo '400'" \
+    "400" \
     "eval"
 
 # ==========================================

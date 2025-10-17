@@ -31,6 +31,7 @@ private:
     const LocationConfig* _findLocationMatch(const std::string& uri, const ServerConfig& server) const;
     std::string _getFilePath(const std::string& uri, const LocationConfig* location);
     void _handleGetRequest(int client_fd, const HttpRequest& request);
+    void _handleHeadRequest(int client_fd, const HttpRequest& request);
     void _sendFile(int client_fd, const std::string& path);
     void _sendAutoindex(int client_fd, const std::string& path, const std::string& uri);
     void _sendNotFound(int client_fd, const std::string& uri);
@@ -40,6 +41,8 @@ private:
     void _sendPostResponse(int client_fd, const HttpRequest& request);
     void _handleDeleteRequest(int client_fd, const HttpRequest& request);
     void _sendDeleteResponse(int client_fd, const HttpRequest& request, bool success, const std::string& message);
+    void _sendHeadResponse(int client_fd, int statusCode, const std::string& contentType, size_t contentLength);
+    void _sendHeadError(int client_fd, int statusCode, const std::string& statusText);
 };
 
 #endif

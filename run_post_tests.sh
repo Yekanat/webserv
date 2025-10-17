@@ -36,12 +36,15 @@ fi
 # Test 3: Verifica file salvato
 echo "🧪 Test 3: Verify saved file"
 if ls uploads/*test_upload.txt > /dev/null 2>&1; then
-    SAVED_CONTENT=$(cat uploads/*test_upload.txt)
+    # Get the most recent test_upload.txt file
+    LATEST_FILE=$(ls -t uploads/*test_upload.txt | head -1)
+    SAVED_CONTENT=$(cat "$LATEST_FILE")
     if [[ $SAVED_CONTENT == "test content" ]]; then
         echo "✅ PASS: File content preserved"
     else
         echo "❌ FAIL: File content corrupted"
         echo "Expected: 'test content', Got: '$SAVED_CONTENT'"
+        echo "Checked file: $LATEST_FILE"
     fi
 else
     echo "❌ FAIL: File not saved"

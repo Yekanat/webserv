@@ -7,6 +7,7 @@
 #include <cerrno>
 #include "utils.hpp"
 #include "HttpResponse.hpp"
+#include <sys/stat.h>
 
 Server::Server() : _max_fd(0) {
     FD_ZERO(&_master_set);
@@ -152,12 +153,14 @@ void Server::_handleClientData(int client_fd) {
     // Handle different HTTP methods
     if (request.getMethod() == "GET") {
         _handleGetRequest(client_fd, request);
+    } else if (request.getMethod() == "HEAD") {
+        _handleHeadRequest(client_fd, request);
     } else if (request.getMethod() == "POST") {
         _handlePostRequest(client_fd, request);
-    } else if (request.getMethod() == "DELETE") {  // ADD this line
+    } else if (request.getMethod() == "DELETE") {
         _handleDeleteRequest(client_fd, request);
     } else {
-        _sendError(client_fd, 405, "Method Not Allowed", "Only GET, POST and DELETE methods are supported");
+        _sendError(client_fd, 405, "Method Not Allowed", "Only GET, HEAD, POST and DELETE methods are currently supported");
     }
     
     close(client_fd);
@@ -199,6 +202,12 @@ const LocationConfig* Server::_findLocationMatch(const std::string& uri, const S
                 if (uri.length() > locPath.length() && uri[locPath.length()] != '/') {
                     continue; // Non è un match valido
                 }
+            } else {
+                // Location termina con /, l'URI deve essere uguale o iniziare con questo prefisso
+                // Accettiamo sia /uploads/ che /uploads/file.txt
+                if (uri.length() < locPath.length()) {
+                    continue; // URI troppo corto per matchare
+                }
             }
             
             // Prendiamo il match più lungo
@@ -238,10 +247,20 @@ std::string Server::_getFilePath(const std::string& uri, const LocationConfig* l
     
     // Gestione directory e index
     if (path.empty() || path == "/") {
-        if (!location->index.empty())
-            path = "/" + location->index;
-        else
-            path = "/index.html";
+        // Se autoindex è abilitato, non cercare index file
+        if (location->autoindex) {
+            // Per autoindex, usa il path della location come directory
+            if (location->path != "/") {
+                path = location->path;
+            } else {
+                path = "/";
+            }
+        } else {
+            if (!location->index.empty())
+                path = "/" + location->index;
+            else
+                path = "/index.html";
+        }
     }
     
     // Rimuovi lo slash iniziale per il join
@@ -364,6 +383,11 @@ void Server::_sendAutoindex(int client_fd, const std::string& path, const std::s
     // Crea HTML
     std::string body = "<html><head><title>Index of " + uri + 
                       "</title></head><body><h1>Index of " + uri + "</h1><ul>";
+    
+    // Aggiungi parent directory link se non siamo nella root
+    if (uri != "/") {
+        body += "<li><a href=\"../\">../</a></li>";
+    }
     
     for (size_t i = 0; i < files.size(); ++i) {
         // Determina se è una directory
@@ -726,3 +750,142 @@ std::string Server::_normalizePath(const std::string& path) {
     
     return normalized;
 }*/
+
+void Server::_handleHeadRequest(int client_fd, const HttpRequest& request) {
+    std::cout << "HEAD " << request.getPath() << std::endl;
+    
+    // Il HEAD method è identico al GET, ma senza inviare il body
+    // Riutilizziamo la stessa logica del GET per generare gli headers
+    
+    std::string uri = request.getUri();
+    
+    // 1. Trova il server config che gestisce questo host
+    const ServerConfig* server = NULL;
+    std::string host = request.getHeader("host");
+    
+    // Rimuovi la porta dall'header host, se presente
+    size_t colonPos = host.find(':');
+    if (colonPos != std::string::npos)
+        host = host.substr(0, colonPos);
+    
+    // Trova il server config corrispondente
+    for (size_t i = 0; i < _servers.size(); ++i) {
+        if (_servers[i].server_name == host) {
+            server = &_servers[i];
+            break;
+        }
+    }
+    
+    // Se non troviamo un server specifico, usa il primo
+    if (!server && !_servers.empty()) {
+        server = &_servers[0];
+    }
+    
+    // 2. Trova il location block che combacia con l'URI
+    const LocationConfig* location = NULL;
+    if (server)
+        location = _findLocationMatch(request.getPath(), *server);
+    
+    if (!location) {
+        // Nessun location match trovato
+        _sendHeadError(client_fd, 404, "Not Found");
+        return;
+    }
+    
+    // 3. Costruisci il percorso del file
+    std::string filePath = _getFilePath(request.getPath(), location);
+    filePath = normalizePath(filePath);
+    
+    // 4. Controlla se il file esiste
+    if (!fileExists(filePath)) {
+        // Se è una directory, prova con index
+        if (isDirectory(filePath)) {
+            std::string indexFile = filePath;
+            if (indexFile[indexFile.length() - 1] != '/')
+                indexFile += "/";
+            indexFile += location->index;
+            
+            if (fileExists(indexFile)) {
+                filePath = indexFile;
+            } else if (location->autoindex) {
+                // Per HEAD su directory con autoindex, invia headers come se fosse HTML
+                _sendHeadResponse(client_fd, 200, "text/html", 0); // 0 = unknown content length for directory listing
+                return;
+            } else {
+                _sendHeadError(client_fd, 403, "Forbidden");
+                return;
+            }
+        } else {
+            _sendHeadError(client_fd, 404, "Not Found");
+            return;
+        }
+    }
+    
+    // 5. Controlla se il file è leggibile
+    if (!isReadable(filePath)) {
+        _sendHeadError(client_fd, 403, "Forbidden");
+        return;
+    }
+    
+    // 6. Determina Content-Type e Content-Length
+    std::string contentType = HttpResponse::getContentType(filePath);
+    
+    // Ottieni la dimensione del file senza leggerlo
+    struct stat fileStat;
+    if (stat(filePath.c_str(), &fileStat) != 0) {
+        _sendHeadError(client_fd, 500, "Internal Server Error");
+        return;
+    }
+    
+    size_t contentLength = fileStat.st_size;
+    
+    // 7. Invia solo gli headers (senza body)
+    _sendHeadResponse(client_fd, 200, contentType, contentLength);
+}
+
+void Server::_sendHeadResponse(int client_fd, int statusCode, const std::string& contentType, size_t contentLength) {
+    // Crea HttpResponse ma senza body
+    HttpResponse response;
+    response.setStatusCode(statusCode);
+    response.setHeader("Content-Type", contentType);
+    
+    if (contentLength > 0) {
+        std::ostringstream oss;
+        oss << contentLength;
+        response.setHeader("Content-Length", oss.str());
+    }
+    
+    // NON settiamo il body per HEAD!
+    // response.setBody(""); // Non chiamare setBody
+    
+    std::string responseStr = response.toString();
+    
+    if (send(client_fd, responseStr.c_str(), responseStr.size(), 0) < 0) {
+        std::cerr << "Errore invio risposta HEAD al client " << client_fd << std::endl;
+    } else {
+        std::cout << "Risposta HEAD " << statusCode << " inviata (headers only)" << std::endl;
+    }
+}
+
+void Server::_sendHeadError(int client_fd, int statusCode, const std::string& statusText) {
+    // Per errori HEAD, invia solo gli headers dell'errore
+    HttpResponse response;
+    response.setStatusCode(statusCode);
+    response.setHeader("Content-Type", "text/html");
+    
+    // Calcola la lunghezza dell'errore HTML che AVREMMO inviato
+    std::string errorBody = "<html><body><h1>" + to_string98(statusCode) + " " + statusText + "</h1></body></html>";
+    std::ostringstream oss;
+    oss << errorBody.length();
+    response.setHeader("Content-Length", oss.str());
+    
+    // NON settiamo il body per HEAD!
+    
+    std::string responseStr = response.toString();
+    
+    if (send(client_fd, responseStr.c_str(), responseStr.size(), 0) < 0) {
+        std::cerr << "Errore invio risposta HEAD error al client " << client_fd << std::endl;
+    } else {
+        std::cout << "Risposta HEAD " << statusCode << " " << statusText << " inviata (headers only)" << std::endl;
+    }
+}

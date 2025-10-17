@@ -82,7 +82,7 @@ run_security_test "CRLF injection in header" \
 
 run_security_test "Very long header value" \
     "curl -s -H 'X-Long-Header: $(printf 'x%.0s' {1..8192})' -o /dev/null -w '%{http_code}' http://localhost:8080/" \
-    "200"
+    "400"
 
 # Request bombing
 echo -e "${YELLOW}💣 Request Bombing Tests${NC}"
@@ -125,7 +125,7 @@ echo "----------------------------------------"
 
 run_security_test "Null byte in URI" \
     "curl -s -o /dev/null -w '%{http_code}' 'http://localhost:8080/index.html%00.txt'" \
-    "200"
+    "404"
 
 # Special characters
 echo -e "${YELLOW}🎭 Special Character Tests${NC}"
@@ -136,7 +136,7 @@ run_security_test "Unicode characters in URI" \
     "404"
 
 run_security_test "SQL injection-like patterns" \
-    "curl -s -o /dev/null -w '%{http_code}' \"http://localhost:8080/index.html';DROP TABLE users;--\"" \
+    "curl -s -o /dev/null -w '%{http_code}' 'http://localhost:8080/index.html%27%3BDROP%20TABLE%20users%3B--'" \
     "404"
 
 # Final check - server still responsive
