@@ -43,6 +43,7 @@ private:
     void _sendDeleteResponse(int client_fd, const HttpRequest& request, bool success, const std::string& message);
     void _sendHeadResponse(int client_fd, int statusCode, const std::string& contentType, size_t contentLength);
     void _sendHeadError(int client_fd, int statusCode, const std::string& statusText);
+    void _sendErrorResponse(int client_fd, int statusCode, const std::string& message);
 };
 
 #endif

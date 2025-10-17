@@ -595,6 +595,13 @@ void Server::_sendPostResponse(int client_fd, const HttpRequest& request) {
 void Server::_handleDeleteRequest(int client_fd, const HttpRequest& request) {
     std::cout << "DELETE " << request.getPath() << std::endl;
     
+    // 0. Security check: prevent null byte injection
+    std::string requestPath = request.getPath();
+    if (requestPath.find('\0') != std::string::npos) {
+        _sendErrorResponse(client_fd, 400, "Bad Request: null byte in path");
+        return;
+    }
+    
     // 1. Find the server config that handles this host
     const ServerConfig* server = NULL;
     std::string host = request.getHeader("host");
@@ -638,7 +645,6 @@ void Server::_handleDeleteRequest(int client_fd, const HttpRequest& request) {
     }
     
     // 4. Resolve the file path
-    std::string requestPath = request.getPath();
     std::string filePath;
     
     if (location) {
@@ -655,23 +661,33 @@ void Server::_handleDeleteRequest(int client_fd, const HttpRequest& request) {
     // Normalize path and prevent directory traversal
     filePath = normalizePath(filePath);
     
-    // 5. Security check: ensure path is within allowed directory
+    // 5. Enhanced security check: ensure path is within allowed directory
     std::string allowedRoot = location ? location->root : (server ? server->root : "./www");
     allowedRoot = normalizePath(allowedRoot);
+    
+    // Check for directory traversal attempts
+    if (requestPath.find("..") != std::string::npos || 
+        requestPath.find("//") != std::string::npos ||
+        requestPath.find("./") != std::string::npos) {
+        _sendErrorResponse(client_fd, 403, "Forbidden: directory traversal attempt");
+        return;
+    }
 
     if (filePath.find(allowedRoot) != 0) {
-        _sendDeleteResponse(client_fd, request, false, "Access denied: path outside allowed directory");
+        _sendErrorResponse(client_fd, 403, "Forbidden: path outside allowed directory");
         return;
     }
     
-    // 6. Check if file exists
-    if (!fileExists(filePath)) {
+    // 6. Check if path exists and what type it is (safer approach)
+    struct stat fileStat;
+    if (stat(filePath.c_str(), &fileStat) != 0) {
+        // File/directory doesn't exist
         _sendDeleteResponse(client_fd, request, false, "File not found");
         return;
     }
     
-    // 7. Check if it's a directory
-    if (isDirectory(filePath)) {
+    // 7. Check if it's a directory - we don't delete directories
+    if (S_ISDIR(fileStat.st_mode)) {
         _sendDeleteResponse(client_fd, request, false, "Cannot delete directory");
         return;
     }
@@ -705,8 +721,8 @@ void Server::_sendDeleteResponse(int client_fd, const HttpRequest& request, bool
         responseBody << "<h1 class=\"success\">✅ DELETE Successful</h1>";
         responseBody << "<p class=\"success\">" << message << "</p>";
     } else {
-        // Determine appropriate error code
-        if (message.find("not found") != std::string::npos) {
+        // Determine appropriate error code based on message content
+        if (message.find("not found") != std::string::npos || message.find("Cannot delete directory") != std::string::npos) {
             response.setStatusCode(404);
         } else if (message.find("not allowed") != std::string::npos || message.find("Access denied") != std::string::npos) {
             response.setStatusCode(403);
@@ -887,5 +903,27 @@ void Server::_sendHeadError(int client_fd, int statusCode, const std::string& st
         std::cerr << "Errore invio risposta HEAD error al client " << client_fd << std::endl;
     } else {
         std::cout << "Risposta HEAD " << statusCode << " " << statusText << " inviata (headers only)" << std::endl;
+    }
+}
+
+void Server::_sendErrorResponse(int client_fd, int statusCode, const std::string& message) {
+    HttpResponse response;
+    response.setStatusCode(statusCode);
+    response.setHeader("Content-Type", "text/html");
+    
+    std::string body = "<html><body><h1>" + to_string98(statusCode) + " " + 
+                      HttpResponse::getStatusMessage(statusCode) + "</h1><p>" + message + "</p></body></html>";
+    
+    std::ostringstream oss;
+    oss << body.length();
+    response.setHeader("Content-Length", oss.str());
+    response.setBody(body);
+    
+    std::string responseStr = response.toString();
+    
+    if (send(client_fd, responseStr.c_str(), responseStr.size(), 0) < 0) {
+        std::cerr << "Errore invio risposta error al client " << client_fd << std::endl;
+    } else {
+        std::cout << "Risposta " << statusCode << " " << HttpResponse::getStatusMessage(statusCode) << " inviata" << std::endl;
     }
 }

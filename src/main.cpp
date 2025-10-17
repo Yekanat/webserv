@@ -46,7 +46,7 @@ int main(int argc, char **argv)
                         instance = new ServerInstance(host, port);
                         instances.push_back(instance);
                         uniqueSockets[endpoint] = instance;
-                        std::cout << "Socket in ascolto su " << host << ":" << port << std::endl;
+                        // Rimosso print duplicato - il constructor già stampa
                     } catch (const std::exception& e) {
                         std::cerr << "Errore binding " << host << ":" << port 
                                   << " - " << e.what() << std::endl;
